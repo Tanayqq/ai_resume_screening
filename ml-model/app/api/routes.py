@@ -1,4 +1,4 @@
-from fastapi import APIRouter, UploadFile, File, Form, Body
+from fastapi import APIRouter, UploadFile, File, Form, Body, HTTPException
 from fastapi.responses import FileResponse
 from typing import List, Optional
 import joblib
@@ -52,7 +52,10 @@ async def analyze_files(
     # 🔹 Get Job Description
     if job_description_file is not None:
         jd_content = await job_description_file.read()
-        jd_text = jd_content.decode("utf-8")
+        try:
+            jd_text = jd_content.decode("utf-8")
+        except UnicodeDecodeError:
+            raise HTTPException(400, "Job description file must be UTF-8 plain text")
 
     elif job_description_text is not None:
         jd_text = job_description_text
@@ -65,7 +68,19 @@ async def analyze_files(
 
     for file in resumes:
         content = await file.read()
-        text = extract_text(file.filename, content)
+        if not content:
+            raise HTTPException(400, f"{file.filename} is empty")
+        try:
+            text = extract_text(file.filename, content)
+        except UnicodeDecodeError:  # subclass of ValueError, so must come first
+            raise HTTPException(400, f"{file.filename} is not UTF-8 text")
+        except ValueError:
+            raise HTTPException(400, f"{file.filename}: unsupported format (use .pdf, .docx or .txt)")
+        except Exception:
+            # corrupt PDF/DOCX
+            raise HTTPException(400, f"{file.filename} could not be read (file may be corrupt)")
+        if not text.strip():
+            raise HTTPException(400, f"{file.filename} contains no readable text")
         resume_texts.append(text)
 
     # 🔹 Process resumes
