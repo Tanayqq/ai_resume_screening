@@ -1,40 +1,55 @@
+// CI pipeline: test -> build images -> push versioned images to Docker Hub.
+// Needs a Jenkins "Username with password" credential with ID 'dockerhub-creds'
+// (Docker Hub username + access token).
+// shortcut: uses `bat`, so it only runs on a Windows Jenkins agent (the team laptop); switch to `sh` for a Linux agent.
 pipeline {
     agent any
+
     environment {
-        DOCKERHUB_USER = 'ibrahimwani'
-        BACKEND_IMAGE  = "${DOCKERHUB_USER}/resume-backend:latest"
-        FRONTEND_IMAGE = "${DOCKERHUB_USER}/resume-frontend:latest"
+        DOCKERHUB = credentials('dockerhub-creds')   // exposes DOCKERHUB_USR and DOCKERHUB_PSW
+        TAG       = "v${env.BUILD_NUMBER}"
     }
+
     stages {
-        stage('Pull Latest Images') {
+        stage('Backend Tests') {
             steps {
-                sh "docker pull ${BACKEND_IMAGE}"
-                sh "docker pull ${FRONTEND_IMAGE}"
+                // venv lives at the workspace root so it stays out of the ml-model Docker build context
+                bat 'python -m venv .ci-venv'
+                bat '.ci-venv\\Scripts\\python -m pip install -q -r ml-model\\requirements.txt'
+                dir('ml-model') {
+                    bat '..\\.ci-venv\\Scripts\\python train.py'
+                    bat '..\\.ci-venv\\Scripts\\python -m pytest -v --junitxml=..\\test-results.xml'
+                }
+            }
+            post { always { junit 'test-results.xml' } }
+        }
+
+        stage('Frontend Lint & Build') {
+            steps {
+                dir('frontend/ai_resume_screening') {
+                    bat 'npm ci'
+                    bat 'npm run lint'
+                    bat 'npm run build'
+                }
             }
         }
-        stage('Load Images into kind') {
+
+        stage('Build Docker Images') {
             steps {
-                sh "kind load docker-image ${BACKEND_IMAGE} --name resume-screening"
-                sh "kind load docker-image ${FRONTEND_IMAGE} --name resume-screening"
+                bat 'docker build -t %DOCKERHUB_USR%/resume-backend:%TAG% -t %DOCKERHUB_USR%/resume-backend:latest ml-model'
+                bat 'docker build -t %DOCKERHUB_USR%/resume-frontend:%TAG% -t %DOCKERHUB_USR%/resume-frontend:latest frontend/ai_resume_screening'
             }
         }
-        stage('Approval') {
+
+        stage('Push to Docker Hub') {
             steps {
-                input message: 'Deploy this build to the local cluster?', ok: 'Deploy'
+                bat 'echo %DOCKERHUB_PSW%| docker login -u %DOCKERHUB_USR% --password-stdin'
+                bat 'docker push %DOCKERHUB_USR%/resume-backend:%TAG%'
+                bat 'docker push %DOCKERHUB_USR%/resume-backend:latest'
+                bat 'docker push %DOCKERHUB_USR%/resume-frontend:%TAG%'
+                bat 'docker push %DOCKERHUB_USR%/resume-frontend:latest'
             }
-        }
-        stage('Deploy via Helm') {
-            steps {
-                sh "kubectl rollout restart deployment backend"
-                sh "kubectl rollout restart deployment frontend"
-                sh "kubectl rollout status deployment backend"
-                sh "kubectl rollout status deployment frontend"
-            }
-        }
-        stage('Verify') {
-            steps {
-                sh "kubectl get pods"
-            }
+            post { always { bat 'docker logout' } }
         }
     }
 }
