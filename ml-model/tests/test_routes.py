@@ -29,3 +29,46 @@ def test_analyze_files_returns_error_when_no_job_description_given():
     assert response.status_code == 200
     body = response.json()
     assert "error" in body
+
+
+JD = {"job_description_text": "Python developer"}
+
+
+def _analyze(filename, content):
+    return client.post("/analyze-files", files={"resumes": (filename, content)}, data=JD)
+
+
+def test_empty_resume_file_returns_400():
+    response = _analyze("resume.pdf", b"")
+    assert response.status_code == 400
+    assert "empty" in response.json()["detail"]
+
+
+def test_unsupported_resume_format_returns_400():
+    response = _analyze("photo.png", b"\x89PNG fake image bytes")
+    assert response.status_code == 400
+    assert "unsupported format" in response.json()["detail"]
+
+
+def test_corrupt_pdf_returns_400():
+    response = _analyze("resume.pdf", b"this is not really a pdf")
+    assert response.status_code == 400
+    assert "could not be read" in response.json()["detail"]
+
+
+def test_non_utf8_txt_returns_400():
+    response = _analyze("resume.txt", b"\xff\xfe\xfa bad bytes")
+    assert response.status_code == 400
+    assert "not UTF-8" in response.json()["detail"]
+
+
+def test_whitespace_only_resume_returns_400():
+    response = _analyze("resume.txt", b"   \n\t  ")
+    assert response.status_code == 400
+    assert "no readable text" in response.json()["detail"]
+
+
+def test_valid_txt_resume_is_scored():
+    response = _analyze("resume.txt", b"Python developer with 3 years of experience in SQL")
+    assert response.status_code == 200
+    assert response.json()["results"][0]["final_score"] > 0
