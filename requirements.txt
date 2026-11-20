@@ -26,4 +26,4 @@ threadpoolctl==3.6.0
 typing-inspection==0.4.2
 typing_extensions==4.15.0
 uvicorn==0.45.0
-xgboost==3.2.0
+xgboost-cpu==3.2.0
