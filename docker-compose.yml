@@ -18,7 +18,8 @@ services:
     ports:
       - "8080:80"
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy  # wait for the model to load, else first /api calls return 502
     networks:
       - resume-app-net
     restart: unless-stopped
